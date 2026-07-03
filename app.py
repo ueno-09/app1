@@ -6,12 +6,10 @@ from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
-# 🆕 アップロードされたファイルを保存するフォルダの設定
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'txt', 'pdf'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# 🆕 起動時にアップロードフォルダが存在しない場合は自動作成する
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -34,7 +32,6 @@ def format_seconds(total_seconds):
     result += f"{seconds}秒"
     return result
 
-# 🆕 ファイル名が許可された拡張子かチェックする関数
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
@@ -88,7 +85,7 @@ AUTH_TEMPLATE = """
 </html>
 """
 
-# --- 画面2: マイページ（履歴＆総時間一覧）のHTML ---
+# --- 画面2: マイページ（履歴＆総時間一覧・編集機能付き）のHTML ---
 MYPAGE_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
@@ -121,23 +118,43 @@ MYPAGE_TEMPLATE = """
         <div class="border-t pt-4">
             <h2 class="text-md font-bold text-gray-700 mb-3">これまでの練習記録</h2>
             {% if sessions %}
-                <ul class="space-y-3">
+                <ul class="space-y-4">
                 {% for s in sessions %}
-                    <li class="bg-gray-50 p-3 rounded border border-gray-200 flex flex-col space-y-2 text-sm">
-                        <div class="flex justify-between">
+                    <li class="bg-gray-50 p-4 rounded border border-gray-200 flex flex-col space-y-2 text-sm">
+                        <div class="flex justify-between items-center">
                             <span class="font-mono text-gray-600">{{ s.practice_date }}</span>
-                            <span class="font-bold text-blue-600">{{ s.duration_seconds }} 秒</span>
+                            <div class="flex items-center space-x-2">
+                                <span class="font-bold text-blue-600 mr-2">{{ s.duration_seconds }} 秒</span>
+                                <button onclick="toggleEditForm({{ s.session_id }})" class="text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 px-2 py-1 rounded">
+                                    ✏️ 添付を変更
+                                </button>
+                            </div>
                         </div>
+
                         {% if s.attached_file_path %}
                         <div class="border-t pt-2 mt-1">
                             {% if s.attached_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')) %}
                                 <img src="/uploads/{{ s.attached_file_path }}" class="max-w-full h-auto rounded border max-h-32 mx-auto block mb-1">
                             {% endif %}
                             <a href="/uploads/{{ s.attached_file_path }}" target="_blank" class="text-xs text-blue-500 hover:underline flex items-center justify-center bg-white p-1 rounded border border-gray-100 shadow-xs">
-                                📁 添付ファイルを開く ({{ s.attached_file_path }})
+                                📁 添付ファイルを開く
                             </a>
                         </div>
                         {% endif %}
+
+                        <div id="editForm-{{ s.session_id }}" class="hidden bg-white p-3 rounded border border-gray-300 mt-2 space-y-2">
+                            <p class="text-xs font-bold text-gray-600">新しいファイルを添付する：</p>
+                            <form action="/edit_session" method="POST" enctype="multipart/form-data" class="space-y-2">
+                                <input type="hidden" name="session_id" value="{{ s.session_id }}">
+                                <input type="hidden" name="user_id" value="{{ user_id }}">
+                                <input type="hidden" name="email" value="{{ email }}">
+                                <input type="file" name="file" class="block w-full text-xs text-gray-500">
+                                <div class="flex justify-end space-x-2">
+                                    <button type="button" onclick="toggleEditForm({{ s.session_id }})" class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">キャンセル</button>
+                                    <button type="submit" class="text-xs bg-green-500 hover:bg-green-600 text-white px-2 py-1 rounded font-bold">保存する</button>
+                                </div>
+                            </form>
+                        </div>
                     </li>
                 {% endfor %}
                 </ul>
@@ -146,6 +163,17 @@ MYPAGE_TEMPLATE = """
             {% endif %}
         </div>
     </div>
+
+    <script>
+        function toggleEditForm(sessionId) {
+            const form = document.getElementById(`editForm-${sessionId}`);
+            if (form.classList.contains('hidden')) {
+                form.classList.remove('hidden');
+            } else {
+                form.classList.add('hidden');
+            }
+        }
+    </script>
 </body>
 </html>
 """
@@ -194,7 +222,6 @@ TIMER_TEMPLATE = """
                 <label class="block text-sm font-medium text-gray-700">練習日（自動記録）</label>
                 <input type="text" name="date" value="{{ today }}" class="mt-1 block w-full bg-gray-100 border p-2 rounded" readonly>
             </div>
-            
             <div>
                 <label class="block text-sm font-medium text-gray-700">練習の成果を添付（任意）</label>
                 <input type="file" name="file" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
@@ -256,7 +283,6 @@ TIMER_TEMPLATE = """
 </html>
 """
 
-# 🆕 アップロードされたファイルを表示・ダウンロードするためのルーティング
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
@@ -308,7 +334,6 @@ def timer():
     today_str = datetime.now().strftime('%Y-%m-%d')
     return render_template_string(TIMER_TEMPLATE, email=email, user_id=user_id, today=today_str)
 
-# 練習セッションの保存処理（🆕 ファイルの保存処理を組み込み）
 @app.route('/save_session', methods=['POST'])
 def save_session():
     user_id = request.form.get('user_id')
@@ -319,24 +344,51 @@ def save_session():
     if not duration or int(duration) <= 0:
         return "エラー: 計測時間が不正です。", 400
 
-    # 🆕 ファイルアップロードの検証・処理
     filename_to_save = None
     if 'file' in request.files:
         file = request.files['file']
         if file and file.filename != '' and allowed_file(file.filename):
-            # 重複防止のためファイル名の先頭にタイムスタンプを付与
             timestamp = datetime.now().strftime('%Y%m%d%H%M%S_')
             filename = timestamp + secure_filename(file.filename)
             file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
             filename_to_save = filename
 
     conn = get_db_connection()
-    # 🆕 データベースの attached_file_path にファイル名を保存する
     conn.execute('''
         INSERT INTO practice_sessions (user_id, practice_date, duration_seconds, attached_file_path) 
         VALUES (?, ?, ?, ?)
     ''', (user_id, date_str, int(duration), filename_to_save))
     conn.commit()
+    
+    sessions = conn.execute('SELECT * FROM practice_sessions WHERE user_id = ? ORDER BY session_id DESC', (user_id,)).fetchall()
+    total_row = conn.execute('SELECT SUM(duration_seconds) as total FROM practice_sessions WHERE user_id = ?', (user_id,)).fetchone()
+    total_seconds = total_row['total'] if total_row['total'] is not None else 0
+    total_time_str = format_seconds(total_seconds)
+    conn.close()
+
+    return render_template_string(MYPAGE_TEMPLATE, email=email, user_id=user_id, sessions=sessions, total_time_str=total_time_str)
+
+# 🆕 後からファイルを変更・追加するためのルーティング
+@app.route('/edit_session', methods=['POST'])
+def edit_session():
+    session_id = request.form.get('session_id')
+    user_id = request.form.get('user_id')
+    email = request.form.get('email')
+
+    filename_to_save = None
+    if 'file' in request.files:
+        file = request.files['file']
+        if file and file.filename != '' and allowed_file(file.filename):
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S_')
+            filename = timestamp + secure_filename(file.filename)
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+            filename_to_save = filename
+
+    conn = get_db_connection()
+    # 既存の記録の attached_file_path を UPDATE文 で新しいファイル名に書き換える
+    if filename_to_save:
+        conn.execute('UPDATE practice_sessions SET attached_file_path = ? WHERE session_id = ?', (filename_to_save, session_id))
+        conn.commit()
     
     sessions = conn.execute('SELECT * FROM practice_sessions WHERE user_id = ? ORDER BY session_id DESC', (user_id,)).fetchall()
     total_row = conn.execute('SELECT SUM(duration_seconds) as total FROM practice_sessions WHERE user_id = ?', (user_id,)).fetchone()
