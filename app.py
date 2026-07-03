@@ -85,7 +85,7 @@ AUTH_TEMPLATE = """
 </html>
 """
 
-# --- 画面2: マイページ（履歴＆総時間一覧・編集機能付き）のHTML ---
+# --- 画面2: マイページ（リマインド機能付き）のHTML ---
 MYPAGE_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="ja">
@@ -100,16 +100,36 @@ MYPAGE_TEMPLATE = """
             <h1 class="text-xl font-bold text-gray-800">マイページ</h1>
             <a href="/" class="text-sm text-red-500 hover:underline">ログアウト</a>
         </div>
-        <p class="text-sm text-gray-500 mb-6">ようこそ、{{ email }} さん</p>
+        <p class="text-sm text-gray-500 mb-4">ようこそ、{{ email }} さん</p>
 
-        <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg text-center mb-6">
+        <div class="bg-blue-50 border border-blue-200 p-4 rounded-lg text-center mb-4">
             <h2 class="text-xs font-bold text-blue-700 uppercase tracking-wide">🔥 これまでの総練習時間</h2>
             <p class="text-2xl font-black text-blue-900 mt-1" id="totalTimeDisplay">{{ total_time_str }}</p>
+        </div>
+
+        <div class="bg-yellow-50 border border-yellow-200 p-4 rounded-lg mb-6 text-sm">
+            <h2 class="font-bold text-yellow-800 mb-2">🔔 毎日リマインド設定</h2>
+            <form action="/save_reminder" method="POST" class="flex items-center space-x-2">
+                <input type="hidden" name="user_id" value="{{ user_id }}">
+                <input type="hidden" name="email" value="{{ email }}">
+                <input type="time" name="reminder_time" value="{{ reminder_time }}" id="reminderTimeInput" class="border rounded p-1 bg-white text-gray-700" required>
+                <button type="submit" class="bg-yellow-600 text-white px-3 py-1 rounded font-bold hover:bg-yellow-700 text-xs">
+                    設定を保存
+                </button>
+            </form>
+            {% if reminder_time and reminder_time != "" %}
+                <p class="text-xs text-yellow-700 mt-2 font-semibold">
+                    現在の設定: 毎日 <span id="activeReminderTime" class="font-bold font-mono text-sm text-yellow-900">{{ reminder_time }}</span> に通知します。
+                </p>
+            {% else %}
+                <p class="text-xs text-gray-400 mt-2">リマインド時刻が設定されていません。</p>
+            {% endif %}
         </div>
 
         <form action="/timer" method="POST" class="mb-8">
             <input type="hidden" name="user_id" value="{{ user_id }}">
             <input type="hidden" name="email" value="{{ email }}">
+            <input type="hidden" name="reminder_time" value="{{ reminder_time }}">
             <button type="submit" class="w-full bg-blue-500 text-white p-3 rounded-lg font-bold shadow hover:bg-blue-600 transition">
                 ⏱️ 新しい練習タイマーを起動する
             </button>
@@ -148,6 +168,7 @@ MYPAGE_TEMPLATE = """
                                 <input type="hidden" name="session_id" value="{{ s.session_id }}">
                                 <input type="hidden" name="user_id" value="{{ user_id }}">
                                 <input type="hidden" name="email" value="{{ email }}">
+                                <input type="hidden" name="reminder_time" value="{{ reminder_time }}">
                                 <input type="file" name="file" class="block w-full text-xs text-gray-500">
                                 <div class="flex justify-end space-x-2">
                                     <button type="button" onclick="toggleEditForm({{ s.session_id }})" class="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">キャンセル</button>
@@ -167,12 +188,33 @@ MYPAGE_TEMPLATE = """
     <script>
         function toggleEditForm(sessionId) {
             const form = document.getElementById(`editForm-${sessionId}`);
-            if (form.classList.contains('hidden')) {
-                form.classList.remove('hidden');
-            } else {
-                form.classList.add('hidden');
-            }
+            form.classList.toggle('hidden');
         }
+
+        // 🆕 バックグラウンドでのリマインド時間監視ロジック
+        let hasNotifiedToday = false;
+
+        setInterval(() => {
+            const reminderTimeElement = document.getElementById('activeReminderTime');
+            if (!reminderTimeElement) return;
+
+            const targetTime = reminderTimeElement.innerText; // "HH:MM" 形式
+            const now = new Date();
+            const currentHours = now.getHours().toString().padStart(2, '0');
+            const currentMinutes = now.getMinutes().toString().padStart(2, '0');
+            const currentTime = `${currentHours}:${currentMinutes}`;
+
+            // 設定時間と現在時刻（時:分）が一致したら通知
+            if (currentTime === targetTime && !hasNotifiedToday) {
+                hasNotifiedToday = true;
+                alert("🔔 練習リマインダー：設定した練習の時間になりました！今日も継続して頑張りましょう！");
+            }
+
+            // 日付が変わったら通知フラグをリセット
+            if (currentHours === "00" && currentMinutes === "00") {
+                hasNotifiedToday = false;
+            }
+        }, 1000); // 1秒ごとにチェック
     </script>
 </body>
 </html>
@@ -193,6 +235,7 @@ TIMER_TEMPLATE = """
             <form action="/login" method="POST">
                 <input type="hidden" name="email" value="{{ email }}">
                 <input type="hidden" name="bypass_password" value="true">
+                <input type="hidden" name="reminder_time" value="{{ reminder_time }}">
                 <button type="submit" class="text-sm text-blue-500 hover:underline">← マイページに戻る</button>
             </form>
         </div>
@@ -213,6 +256,7 @@ TIMER_TEMPLATE = """
             <input type="hidden" name="user_id" value="{{ user_id }}">
             <input type="hidden" name="email" value="{{ email }}">
             <input type="hidden" name="duration" id="durationInput">
+            <input type="hidden" name="reminder_time" value="{{ reminder_time }}">
 
             <div>
                 <label class="block text-sm font-medium text-gray-700">計測結果（秒）</label>
@@ -225,7 +269,6 @@ TIMER_TEMPLATE = """
             <div>
                 <label class="block text-sm font-medium text-gray-700">練習の成果を添付（任意）</label>
                 <input type="file" name="file" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
-                <p class="text-xs text-gray-400 mt-1">対応: 画像(png,jpg,gif), txt, pdf</p>
             </div>
             
             <button type="submit" class="w-full bg-green-500 text-white p-3 rounded font-bold hover:bg-green-600">
@@ -312,6 +355,8 @@ def login():
     email = request.form.get('email', '').strip()
     password = request.form.get('password', '').strip()
     bypass = request.form.get('bypass_password')
+    reminder_time = request.form.get('reminder_time', '') # パスワードバイパス時にリマインド時間を引き継ぐ
+
     conn = get_db_connection()
     if bypass == "true":
         user = conn.execute('SELECT * FROM users WHERE email = ?', (email,)).fetchone()
@@ -320,19 +365,22 @@ def login():
     if user is None:
         conn.close()
         return render_template_string(AUTH_TEMPLATE, error_message="ログインに失敗しました。")
+    
     sessions = conn.execute('SELECT * FROM practice_sessions WHERE user_id = ? ORDER BY session_id DESC', (user['user_id'],)).fetchall()
     total_row = conn.execute('SELECT SUM(duration_seconds) as total FROM practice_sessions WHERE user_id = ?', (user['user_id'],)).fetchone()
     total_seconds = total_row['total'] if total_row['total'] is not None else 0
     total_time_str = format_seconds(total_seconds)
     conn.close()
-    return render_template_string(MYPAGE_TEMPLATE, email=user['email'], user_id=user['user_id'], sessions=sessions, total_time_str=total_time_str)
+
+    return render_template_string(MYPAGE_TEMPLATE, email=user['email'], user_id=user['user_id'], sessions=sessions, total_time_str=total_time_str, reminder_time=reminder_time)
 
 @app.route('/timer', methods=['POST'])
 def timer():
     user_id = request.form.get('user_id')
     email = request.form.get('email')
+    reminder_time = request.form.get('reminder_time', '')
     today_str = datetime.now().strftime('%Y-%m-%d')
-    return render_template_string(TIMER_TEMPLATE, email=email, user_id=user_id, today=today_str)
+    return render_template_string(TIMER_TEMPLATE, email=email, user_id=user_id, today=today_str, reminder_time=reminder_time)
 
 @app.route('/save_session', methods=['POST'])
 def save_session():
@@ -340,6 +388,7 @@ def save_session():
     email = request.form.get('email')
     duration = request.form.get('duration')
     date_str = request.form.get('date')
+    reminder_time = request.form.get('reminder_time', '')
 
     if not duration or int(duration) <= 0:
         return "エラー: 計測時間が不正です。", 400
@@ -366,14 +415,14 @@ def save_session():
     total_time_str = format_seconds(total_seconds)
     conn.close()
 
-    return render_template_string(MYPAGE_TEMPLATE, email=email, user_id=user_id, sessions=sessions, total_time_str=total_time_str)
+    return render_template_string(MYPAGE_TEMPLATE, email=email, user_id=user_id, sessions=sessions, total_time_str=total_time_str, reminder_time=reminder_time)
 
-# 🆕 後からファイルを変更・追加するためのルーティング
 @app.route('/edit_session', methods=['POST'])
 def edit_session():
     session_id = request.form.get('session_id')
     user_id = request.form.get('user_id')
     email = request.form.get('email')
+    reminder_time = request.form.get('reminder_time', '')
 
     filename_to_save = None
     if 'file' in request.files:
@@ -385,7 +434,6 @@ def edit_session():
             filename_to_save = filename
 
     conn = get_db_connection()
-    # 既存の記録の attached_file_path を UPDATE文 で新しいファイル名に書き換える
     if filename_to_save:
         conn.execute('UPDATE practice_sessions SET attached_file_path = ? WHERE session_id = ?', (filename_to_save, session_id))
         conn.commit()
@@ -396,7 +444,24 @@ def edit_session():
     total_time_str = format_seconds(total_seconds)
     conn.close()
 
-    return render_template_string(MYPAGE_TEMPLATE, email=email, user_id=user_id, sessions=sessions, total_time_str=total_time_str)
+    return render_template_string(MYPAGE_TEMPLATE, email=email, user_id=user_id, sessions=sessions, total_time_str=total_time_str, reminder_time=reminder_time)
+
+# 🆕 設定したリマインド時刻を受け取り、マイページに反映させるルーティング
+@app.route('/save_reminder', methods=['POST'])
+def save_reminder():
+    user_id = request.form.get('user_id')
+    email = request.form.get('email')
+    reminder_time = request.form.get('reminder_time')
+
+    conn = get_db_connection()
+    sessions = conn.execute('SELECT * FROM practice_sessions WHERE user_id = ? ORDER BY session_id DESC', (user_id,)).fetchall()
+    total_row = conn.execute('SELECT SUM(duration_seconds) as total FROM practice_sessions WHERE user_id = ?', (user_id,)).fetchone()
+    total_seconds = total_row['total'] if total_row['total'] is not None else 0
+    total_time_str = format_seconds(total_seconds)
+    conn.close()
+
+    # 時刻を保持したままマイページを再描画
+    return render_template_string(MYPAGE_TEMPLATE, email=email, user_id=user_id, sessions=sessions, total_time_str=total_time_str, reminder_time=reminder_time)
 
 if __name__ == '__main__':
     app.run(debug=True)
