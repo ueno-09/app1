@@ -1,31 +1,42 @@
-from flask import Flask, render_template_string, request
+import os
+from flask import Flask, render_template_string, request, send_from_directory
 import sqlite3
 from datetime import datetime
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
+
+# 🆕 アップロードされたファイルを保存するフォルダの設定
+UPLOAD_FOLDER = 'uploads'
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'txt', 'pdf'}
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+# 🆕 起動時にアップロードフォルダが存在しない場合は自動作成する
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
 def get_db_connection():
     conn = sqlite3.connect('practice_tracker.db')
     conn.row_factory = sqlite3.Row
     return conn
 
-# 秒数を「〇時間 〇分 〇秒」の文字列に変換するヘルパー関数
 def format_seconds(total_seconds):
     if not total_seconds:
         return "0秒"
-    
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
     seconds = total_seconds % 60
-    
     result = ""
     if hours > 0:
         result += f"{hours}時間 "
     if minutes > 0 or hours > 0:
         result += f"{minutes}分 "
     result += f"{seconds}秒"
-    
     return result
+
+# 🆕 ファイル名が許可された拡張子かチェックする関数
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # --- 画面1: ログイン・登録画面のHTML ---
 AUTH_TEMPLATE = """
@@ -110,11 +121,23 @@ MYPAGE_TEMPLATE = """
         <div class="border-t pt-4">
             <h2 class="text-md font-bold text-gray-700 mb-3">これまでの練習記録</h2>
             {% if sessions %}
-                <ul class="space-y-2">
+                <ul class="space-y-3">
                 {% for s in sessions %}
-                    <li class="bg-gray-50 p-3 rounded border border-gray-200 flex justify-between text-sm">
-                        <span class="font-mono text-gray-600">{{ s.practice_date }}</span>
-                        <span class="font-bold text-blue-600">{{ s.duration_seconds }} 秒</span>
+                    <li class="bg-gray-50 p-3 rounded border border-gray-200 flex flex-col space-y-2 text-sm">
+                        <div class="flex justify-between">
+                            <span class="font-mono text-gray-600">{{ s.practice_date }}</span>
+                            <span class="font-bold text-blue-600">{{ s.duration_seconds }} 秒</span>
+                        </div>
+                        {% if s.attached_file_path %}
+                        <div class="border-t pt-2 mt-1">
+                            {% if s.attached_file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')) %}
+                                <img src="/uploads/{{ s.attached_file_path }}" class="max-w-full h-auto rounded border max-h-32 mx-auto block mb-1">
+                            {% endif %}
+                            <a href="/uploads/{{ s.attached_file_path }}" target="_blank" class="text-xs text-blue-500 hover:underline flex items-center justify-center bg-white p-1 rounded border border-gray-100 shadow-xs">
+                                📁 添付ファイルを開く ({{ s.attached_file_path }})
+                            </a>
+                        </div>
+                        {% endif %}
                     </li>
                 {% endfor %}
                 </ul>
@@ -158,7 +181,7 @@ TIMER_TEMPLATE = """
             <button id="stopBtn" onclick="stopTimer()" class="bg-red-500 text-white px-6 py-2 rounded hover:bg-red-600 hidden">ストップ</button>
         </div>
 
-        <form action="/save_session" method="POST" id="saveForm" class="hidden border-t pt-6 space-y-4 text-left">
+        <form action="/save_session" method="POST" id="saveForm" enctype="multipart/form-data" class="hidden border-t pt-6 space-y-4 text-left">
             <input type="hidden" name="user_id" value="{{ user_id }}">
             <input type="hidden" name="email" value="{{ email }}">
             <input type="hidden" name="duration" id="durationInput">
@@ -170,6 +193,12 @@ TIMER_TEMPLATE = """
             <div>
                 <label class="block text-sm font-medium text-gray-700">練習日（自動記録）</label>
                 <input type="text" name="date" value="{{ today }}" class="mt-1 block w-full bg-gray-100 border p-2 rounded" readonly>
+            </div>
+            
+            <div>
+                <label class="block text-sm font-medium text-gray-700">練習の成果を添付（任意）</label>
+                <input type="file" name="file" class="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+                <p class="text-xs text-gray-400 mt-1">対応: 画像(png,jpg,gif), txt, pdf</p>
             </div>
             
             <button type="submit" class="w-full bg-green-500 text-white p-3 rounded font-bold hover:bg-green-600">
@@ -227,6 +256,11 @@ TIMER_TEMPLATE = """
 </html>
 """
 
+# 🆕 アップロードされたファイルを表示・ダウンロードするためのルーティング
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
 @app.route('/')
 def home():
     return render_template_string(AUTH_TEMPLATE)
@@ -237,7 +271,6 @@ def register():
     password = request.form.get('password', '').strip()
     if not email or not password or "@" not in email:
         return render_template_string(AUTH_TEMPLATE, error_message="登録内容が正しくありません。")
-    
     conn = get_db_connection()
     try:
         conn.execute('INSERT INTO users (email, password) VALUES (?, ?)', (email, password))
@@ -253,31 +286,19 @@ def login():
     email = request.form.get('email', '').strip()
     password = request.form.get('password', '').strip()
     bypass = request.form.get('bypass_password')
-
     conn = get_db_connection()
-    
     if bypass == "true":
         user = conn.execute('SELECT * FROM users WHERE email = ?', (email,)).fetchone()
     else:
         user = conn.execute('SELECT * FROM users WHERE email = ? AND password = ?', (email, password)).fetchone()
-
     if user is None:
         conn.close()
         return render_template_string(AUTH_TEMPLATE, error_message="ログインに失敗しました。")
-
-    # 過去の練習記録を取得
     sessions = conn.execute('SELECT * FROM practice_sessions WHERE user_id = ? ORDER BY session_id DESC', (user['user_id'],)).fetchall()
-    
-    # 🆕 データベースから総練習時間（秒数）を計算して取得する
     total_row = conn.execute('SELECT SUM(duration_seconds) as total FROM practice_sessions WHERE user_id = ?', (user['user_id'],)).fetchone()
     total_seconds = total_row['total'] if total_row['total'] is not None else 0
-    
-    # 🆕 ヘルパー関数で「〇時間〇分〇秒」に変換
     total_time_str = format_seconds(total_seconds)
-    
     conn.close()
-
-    # 総時間の文字列も一緒にテンプレートへ渡す
     return render_template_string(MYPAGE_TEMPLATE, email=user['email'], user_id=user['user_id'], sessions=sessions, total_time_str=total_time_str)
 
 @app.route('/timer', methods=['POST'])
@@ -287,6 +308,7 @@ def timer():
     today_str = datetime.now().strftime('%Y-%m-%d')
     return render_template_string(TIMER_TEMPLATE, email=email, user_id=user_id, today=today_str)
 
+# 練習セッションの保存処理（🆕 ファイルの保存処理を組み込み）
 @app.route('/save_session', methods=['POST'])
 def save_session():
     user_id = request.form.get('user_id')
@@ -297,21 +319,29 @@ def save_session():
     if not duration or int(duration) <= 0:
         return "エラー: 計測時間が不正です。", 400
 
+    # 🆕 ファイルアップロードの検証・処理
+    filename_to_save = None
+    if 'file' in request.files:
+        file = request.files['file']
+        if file and file.filename != '' and allowed_file(file.filename):
+            # 重複防止のためファイル名の先頭にタイムスタンプを付与
+            timestamp = datetime.now().strftime('%Y%m%d%H%M%S_')
+            filename = timestamp + secure_filename(file.filename)
+            file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+            filename_to_save = filename
+
     conn = get_db_connection()
+    # 🆕 データベースの attached_file_path にファイル名を保存する
     conn.execute('''
-        INSERT INTO practice_sessions (user_id, practice_date, duration_seconds) 
-        VALUES (?, ?, ?)
-    ''', (user_id, date_str, int(duration)))
+        INSERT INTO practice_sessions (user_id, practice_date, duration_seconds, attached_file_path) 
+        VALUES (?, ?, ?, ?)
+    ''', (user_id, date_str, int(duration), filename_to_save))
     conn.commit()
     
-    # マイページ再表示用のデータ取得
     sessions = conn.execute('SELECT * FROM practice_sessions WHERE user_id = ? ORDER BY session_id DESC', (user_id,)).fetchall()
-    
-    # 🆕 保存完了時にも総練習時間を再計算して反映させる
     total_row = conn.execute('SELECT SUM(duration_seconds) as total FROM practice_sessions WHERE user_id = ?', (user_id,)).fetchone()
     total_seconds = total_row['total'] if total_row['total'] is not None else 0
     total_time_str = format_seconds(total_seconds)
-    
     conn.close()
 
     return render_template_string(MYPAGE_TEMPLATE, email=email, user_id=user_id, sessions=sessions, total_time_str=total_time_str)
